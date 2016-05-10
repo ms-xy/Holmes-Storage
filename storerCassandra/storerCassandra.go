@@ -3,6 +3,7 @@ package StorerCassandra
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gocql/gocql"
 
@@ -38,6 +39,7 @@ func (s StorerCassandra) Initialize(c []*storerGeneric.DBConnector) (storerGener
 	cluster.ProtoVersion = 4
 	cluster.Keyspace = c[0].Database
 	cluster.Consistency = gocql.Quorum
+	cluster.Timeout = 10 * time.Second
 	s.DB, err = cluster.CreateSession()
 
 	return s, err

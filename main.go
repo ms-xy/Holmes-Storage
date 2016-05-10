@@ -12,7 +12,7 @@ import (
 	"github.com/HolmesProcessing/Holmes-Storage/objStorerGeneric"
 	"github.com/HolmesProcessing/Holmes-Storage/objStorerS3"
 	"github.com/HolmesProcessing/Holmes-Storage/objStorerLocalFS"
-	"github.com/HolmesProcessing/Holmes-Storage/storerCassandra"
+	"github.com/ms-xy/Holmes-Storage/storerCassandra"
 	"github.com/HolmesProcessing/Holmes-Storage/storerGeneric"
 	"github.com/HolmesProcessing/Holmes-Storage/storerMongoDB"
 )
