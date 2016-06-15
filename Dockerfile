@@ -1,8 +1,8 @@
 FROM golang:1.6.2
 
 RUN apt-get update
-RUN apt-get upgrade
-RUN apt-get install -y curl libmagic-dev gcc apt-transport-https
+RUN apt-get upgrade -y --force-yes
+RUN apt-get install -y --force-yes curl libmagic-dev gcc apt-transport-https
 
 ENV GOROOT /usr/local/go
 RUN go get -v -x -u "github.com/HolmesProcessing/Holmes-Storage"
