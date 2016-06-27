@@ -5,7 +5,7 @@ RUN apt-get upgrade -y --force-yes
 RUN apt-get install -y --force-yes curl libmagic-dev gcc apt-transport-https
 
 ENV GOROOT /usr/local/go
-RUN go get -v -x -u "github.com/HolmesProcessing/Holmes-Storage"
+RUN go get -v -u "github.com/HolmesProcessing/Holmes-Storage"
 
 RUN mkdir -p /data/holmes-storage/
 WORKDIR /data/holmes-storage/
