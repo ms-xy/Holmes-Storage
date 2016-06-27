@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/HolmesProcessing/Holmes-Storage/objStorerGeneric"
@@ -26,6 +28,7 @@ type apiResponse struct {
 
 var (
 	extendedMime bool
+	mimeLock     = &sync.Mutex{}
 )
 
 func initHTTP(httpBinding string, eMime bool) {
@@ -88,8 +91,12 @@ func httpSampleStore(w http.ResponseWriter, r *http.Request, _ httprouter.Params
 	if !extendedMime {
 		mimeType = http.DetectContentType(fileBytes)
 	} else {
+
+		mimeLock.Lock()
+
 		if err = magicmime.Open(magicmime.MAGIC_ERROR); err != nil {
 			httpFailure(w, r, errors.New("ExtendedMime is activated but libmagic is not installed!"))
+			mimeLock.Unlock()
 			return
 		}
 
@@ -97,10 +104,12 @@ func httpSampleStore(w http.ResponseWriter, r *http.Request, _ httprouter.Params
 		if err != nil {
 			magicmime.Close()
 			httpFailure(w, r, errors.New("libmagic failed with "+err.Error()))
+			mimeLock.Unlock()
 			return
 		}
 
 		magicmime.Close()
+		mimeLock.Unlock()
 	}
 
 	// create structs for db
@@ -159,7 +168,7 @@ func httpSampleStore(w http.ResponseWriter, r *http.Request, _ httprouter.Params
 }
 
 func httpSampleGet(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	sample, err := objStorer.GetSample(ps.ByName("sha256"))
+	sample, err := objStorer.GetSample(strings.ToLower(ps.ByName("sha256")))
 
 	if err != nil {
 		httpFailure(w, r, err)
