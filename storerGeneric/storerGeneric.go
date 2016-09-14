@@ -21,6 +21,9 @@ type DBConnector struct {
 }
 
 type Storer interface {
+	// Cretes the database. this is separate from Initialize()
+	// because Initialize() requires the database to exist
+	CreateDB(c []*DBConnector) error
 	// Initializes the connection and the Storer object
 	// ip, port, user, passwort, db name
 	Initialize([]*DBConnector) (Storer, error)
@@ -41,6 +44,9 @@ type Storer interface {
 
 	// Gets a result by Id from the database
 	GetResult(string) (*Result, error)
+
+	StoreConfig(*Config) error
+	GetConfig(string) (*Config, error)
 }
 
 type Object struct {
@@ -83,4 +89,9 @@ type Result struct {
 	WatchguardStatus  string    `json:"watchguard_status"`
 	WatchguardLog     []string  `json:"watchguard_log"`
 	WatchguardVersion string    `json:"watchguard_version"`
+}
+
+type Config struct {
+	Path         string `json:"path"`
+	FileContents string `json:"file_contents"`
 }

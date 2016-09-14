@@ -61,7 +61,7 @@ func main() {
 
 	if confPath == "" {
 		confPath, _ = filepath.Abs(filepath.Dir(os.Args[0]))
-		confPath += "/config.json"
+		confPath += "/config/storage.conf"
 	}
 
 	conf := &config{}
@@ -83,6 +83,14 @@ func main() {
 	//	mainStorer = &storerMySQL{}
 	default:
 		warning.Panicln("Please supply a valid storage engine!")
+	}
+
+	if setup {
+		// Create the DB.
+		err := mainStorer.CreateDB(conf.Database)
+		if err != nil {
+			warning.Println("Storer setup failed!", err.Error())
+		}
 	}
 
 	mainStorer, err = mainStorer.Initialize(conf.Database)
