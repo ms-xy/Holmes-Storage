@@ -16,7 +16,7 @@ type StorerCassandra struct {
 	DB *gocql.Session
 }
 
-func (s StorerCassandra) Initialize(c []*storerGeneric.DBConnector) (storerGeneric.Storer, error) {
+func (s StorerCassandra) PrepareCluster(c []*storerGeneric.DBConnector) (*gocql.ClusterConfig, error) {
 	if len(c) < 1 {
 		return nil, errors.New("Supply at least one node to connect to!")
 	}
@@ -37,6 +37,34 @@ func (s StorerCassandra) Initialize(c []*storerGeneric.DBConnector) (storerGener
 		Password: c[0].Password,
 	}
 	cluster.ProtoVersion = 4
+	return cluster, err
+}
+
+func (s StorerCassandra) CreateDB(c []*storerGeneric.DBConnector) error {
+	cluster, err := s.PrepareCluster(c)
+	if err != nil {
+		return err
+	}
+	cluster.Keyspace = "system"
+	s.DB, err = cluster.CreateSession()
+	if err != nil{
+		return err
+	}
+	query := fmt.Sprintf(`CREATE KEYSPACE IF NOT EXISTS %s WITH replication = 
+		{'class': 'SimpleStrategy',
+		'replication_factor':1};`, c[0].Database)
+	if err := s.DB.Query(query).Exec(); err != nil {
+		return err
+	}
+	s.DB.Close()
+	return nil
+}
+
+func (s StorerCassandra) Initialize(c []*storerGeneric.DBConnector) (storerGeneric.Storer, error) {
+	cluster, err := s.PrepareCluster(c)
+	if err != nil {
+		return s, err
+	}
 	cluster.Keyspace = c[0].Database
 	cluster.Consistency = gocql.Quorum
 	cluster.Timeout = 10 * time.Second
@@ -55,6 +83,9 @@ func (s StorerCassandra) Setup() error {
 	}
 	if err := s.DB.Query("SELECT * FROM submissions LIMIT 1;").Exec(); err == nil {
 		return errors.New("Table submissions already exists, aborting!")
+	}
+	if err := s.DB.Query("SELECT * FROM config LIMIT 1;").Exec(); err == nil {
+		return errors.New("Table config already exists, aborting!")
 	}
 
 	// create tables
@@ -76,7 +107,8 @@ func (s StorerCassandra) Setup() error {
 		finished_date_time timestamp,
 		watchguard_status text,
 		watchguard_log list<text>,
-		watchguard_version text
+		watchguard_version text,
+		comment text
 	);`
 	if err := s.DB.Query(tableResults).Exec(); err != nil {
 		return err
@@ -109,61 +141,89 @@ func (s StorerCassandra) Setup() error {
 		return err
 	}
 
+	tableConfig := `CREATE TABLE config(
+		path text PRIMARY KEY,
+		file_contents text
+	);`
+	if err := s.DB.Query(tableConfig).Exec(); err != nil {
+		return err
+	}
+
 	//TODO: add complex SASI indexes on tags, object_category, etc when supported by Cassandra
 	//TODO: add indexes for other entries (watchguard_status, user_id, service_version) under results when totem catches up
 
 	// Add SASI indexes for results
-	tableResultsIndex := `CREATE CUSTOM INDEX results_finished_date_time_idx 
-		ON holmes_testing.results (finished_date_time) 
+	tableResultsIndex := `CREATE CUSTOM INDEX results_comment_idx 
+		ON results (comment) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
 		WITH OPTIONS = {
-			'mode' : 'SPARSE'
+			'analyzed' : 'true', 
+			'analyzer_class' : 'org.apache.cassandra.index.sasi.analyzer.StandardAnalyzer', 
+			'tokenization_enable_stemming' : 'true', 
+			'tokenization_locale' : 'en', 
+			'tokenization_normalize_lowercase' : 'true', 
+			'tokenization_skip_stop_words' : 'true'
 		};`
 	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
 		return err
 	}
 
+	tableResultsIndex = `CREATE CUSTOM INDEX results_finished_date_time_idx 
+		ON results (finished_date_time) 
+		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
+	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
+		return err
+	}
+
 	tableResultsIndex = `CREATE CUSTOM INDEX results_service_name_idx 
-		ON holmes_testing.results (service_name) 
+		ON results (service_name) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableResultsIndex = `CREATE CUSTOM INDEX results_sha256_idx 
-		ON holmes_testing.results (sha256) 
+		ON results (sha256) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableResultsIndex = `CREATE CUSTOM INDEX results_started_date_time_idx 
-		ON holmes_testing.results (started_date_time) 
-		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
-		WITH OPTIONS = {
-			'mode' : 'SPARSE'
-		};`
+		ON results (started_date_time) 
+		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
 		return err
 	}
 //////////	
 // WARNING: Uncomment only if needed. This can increase physical storage costs by ~40% with 1 million samples and 4 Services.
-//	tableResultsIndex := `CREATE CUSTOM INDEX results_results_idx ON holmes_testing.results (results) USING 'org.apache.cassandra.index.sasi.SASIIndex' WITH OPTIONS = {'analyzed' : 'true', 'analyzer_class' : 'org.apache.cassandra.index.sasi.analyzer.StandardAnalyzer', 'tokenization_enable_stemming' : 'false', 'tokenization_locale' : 'en', 'tokenization_normalize_lowercase' : 'true', 'tokenization_skip_stop_words' : 'true'};`
+//	tableResultsIndex := `CREATE CUSTOM INDEX results_results_idx 
+//	ON results (results) 
+//	USING 'org.apache.cassandra.index.sasi.SASIIndex' 
+//	WITH OPTIONS = {
+//		'analyzed' : 'true', 
+//		'analyzer_class' : 'org.apache.cassandra.index.sasi.analyzer.StandardAnalyzer', 
+//		'tokenization_enable_stemming' : 'false', 
+//		'tokenization_locale' : 'en', 
+//		'tokenization_normalize_lowercase' : 'true', 
+//		'tokenization_skip_stop_words' : 'true',
+//		'max_compaction_flush_memory_in_mb': '512'
+//		};`
 //	if err := s.DB.Query(tableResultsIndex).Exec(); err != nil {
 //		return err
 //	}
 //////////
 
 	// Add SASI indexes for objects
-	tableObjectsIndex = `CREATE CUSTOM INDEX objects_md5_idx 
-		ON holmes_testing.objects (md5) 
+	tableObjectsIndex := `CREATE CUSTOM INDEX objects_md5_idx 
+		ON objects (md5) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableObjectsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableObjectsIndex = `CREATE CUSTOM INDEX objects_mime_idx 
-		ON holmes_testing.objects (mime) 
+		ON objects (mime) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
 		WITH OPTIONS = {
 			'analyzed' : 'true', 
@@ -178,8 +238,8 @@ func (s StorerCassandra) Setup() error {
 	}
 
 	// Add SASI indexes for submissions
-	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_comment_idx 
-		ON holmes_testing.submissions (comment) 
+	tableSubmissionsIndex := `CREATE CUSTOM INDEX submissions_comment_idx 
+		ON submissions (comment) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
 		WITH OPTIONS = {
 			'analyzed' : 'true', 
@@ -194,17 +254,14 @@ func (s StorerCassandra) Setup() error {
 	}
 
 	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_date_idx 
-		ON holmes_testing.submissions (date) 
-		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
-		WITH OPTIONS = {
-			'mode' : 'SPARSE'
-		};`
+		ON submissions (date) 
+		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableSubmissionsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_obj_name_idx 
-		ON holmes_testing.submissions (obj_name) 
+		ON submissions (obj_name) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex' 
 		WITH OPTIONS = {
 			'mode' : 'CONTAINS'
@@ -214,21 +271,21 @@ func (s StorerCassandra) Setup() error {
 	}
 
 	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_sha256_idx 
-		ON holmes_testing.submissions (sha256) 
+		ON submissions (sha256) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableSubmissionsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_source_idx 
-		ON holmes_testing.submissions (source) 
+		ON submissions (source) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableSubmissionsIndex).Exec(); err != nil {
 		return err
 	}
 
 	tableSubmissionsIndex = `CREATE CUSTOM INDEX submissions_user_id_idx 
-		ON holmes_testing.submissions (user_id) 
+		ON submissions (user_id) 
 		USING 'org.apache.cassandra.index.sasi.SASIIndex';`
 	if err := s.DB.Query(tableSubmissionsIndex).Exec(); err != nil {
 		return err
@@ -277,6 +334,9 @@ func (s StorerCassandra) StoreObject(object *storerGeneric.Object) error {
 			object.SHA256,
 		).Exec()
 	}
+	object.Source = source
+	object.ObjName = obj_name
+	object.Submissions = submission_ids
 
 	return err
 }
@@ -428,4 +488,24 @@ func (s StorerCassandra) GetResult(id string) (*storerGeneric.Result, error) {
 	)
 
 	return result, err
+}
+
+func (s StorerCassandra) StoreConfig(config *storerGeneric.Config) error {
+	err := s.DB.Query(`INSERT INTO config (path, file_contents) VALUES (?, ?)`,
+		config.Path,
+		config.FileContents,
+	).Exec()
+
+	return err
+}
+
+func (s StorerCassandra) GetConfig(path string) (*storerGeneric.Config, error) {
+	config := &storerGeneric.Config{}
+
+	err := s.DB.Query(`SELECT * FROM config WHERE path = ? LIMIT 1`, path).Scan(
+		&config.Path,
+		&config.FileContents,
+	)
+
+	return config, err
 }
